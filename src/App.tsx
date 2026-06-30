@@ -6,11 +6,11 @@ import { db } from './lib/firebase';
 import { seedBatch } from './lib/seed';
 
 const badgeColors: Record<string, string> = {
-  "Schunk": "bg-[#8E44AD]",
-  "Hiwin": "bg-[#2980B9]",
-  "Leuze": "bg-[#E67E22]",
-  "Festo": "bg-[#27AE60]",
-  "Trafag": "bg-[#C0392B]",
+  "Schunk": "bg-[#003974]",
+  "Hiwin": "bg-[#8DBE1D]",
+  "Leuze": "bg-[#660099]",
+  "Festo": "bg-[#0063AD]",
+  "Trafag": "bg-[#FF5100]",
   "Alluminio": "bg-[#7F8C8D]",
   "Inox 316": "bg-[#2C3E50]",
   "Nastri": "bg-[#16A085]",
