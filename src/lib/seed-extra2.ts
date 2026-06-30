@@ -127,7 +127,7 @@ function generateLocation(): { regione: Regione, provincia: string, comune: stri
   const regione = randomItem(regPool) as Regione;
   const provs = Object.keys(regioniData[regione]);
   const provincia = randomItem(provs);
-  const comuni = (regioniData[regione] as any)[provincia];
+  const comuni = (regioniData[regione] as Record<string, string[]>)[provincia];
   const comune = randomItem(comuni);
   return { regione, provincia, comune };
 }

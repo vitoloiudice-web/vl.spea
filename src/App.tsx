@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { Fascia, Company } from './types';
-import { Download, ChevronDown, Loader2 } from 'lucide-react';
+import { Download, ChevronDown, Loader2, Search, Filter, X } from 'lucide-react';
 import { collection, getDocs, query, where, getCountFromServer } from 'firebase/firestore';
 import { db } from './lib/firebase';
 import { seedBatch } from './lib/seed';
@@ -94,30 +94,195 @@ export default function App() {
     setLoading(false);
   };
   
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [isFilterVisible, setIsFilterVisible] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [filters, setFilters] = useState({
+    priorita: [] as string[],
+    settore: "",
+    sotto_settore: "",
+    fascia: "",
+    ragione_sociale: "",
+    comune: "",
+    provincia: "",
+    regione: "",
+    ruolo: "",
+    prodotti: [] as string[],
+    applicazione: "",
+    note: ""
+  });
+
+  const [searchModes, setSearchModes] = useState({
+    ragione_sociale: 'contains' as 'starts' | 'contains',
+    note: 'contains' as 'starts' | 'contains'
+  });
+
+  const filteredData = useMemo(() => {
+    return currentData.filter(item => {
+      // Priorità (Multi)
+      if (filters.priorita.length > 0 && !filters.priorita.includes(item.priorita)) return false;
+      
+      // Select Filters
+      if (filters.settore && item.settore !== filters.settore) return false;
+      if (filters.sotto_settore && item.sotto_settore !== filters.sotto_settore) return false;
+      if (filters.fascia && item.fascia !== filters.fascia) return false;
+      if (filters.comune && item.comune !== filters.comune) return false;
+      if (filters.provincia && item.provincia !== filters.provincia) return false;
+      if (filters.regione && item.regione !== filters.regione) return false;
+      if (filters.ruolo && item.ruolo !== filters.ruolo) return false;
+      if (filters.applicazione && item.applicazione !== filters.applicazione) return false;
+
+      // Search Filters
+      const matchText = (val: string, search: string, mode: 'starts' | 'contains') => {
+        if (!search) return true;
+        const v = val.toLowerCase();
+        const s = search.toLowerCase();
+        return mode === 'starts' ? v.startsWith(s) : v.includes(s);
+      };
+
+      if (!matchText(item.ragione_sociale, filters.ragione_sociale, searchModes.ragione_sociale)) return false;
+      if (!matchText(item.note || "", filters.note, searchModes.note)) return false;
+
+      // Prodotti (Multi)
+      if (filters.prodotti.length > 0) {
+        if (!filters.prodotti.some(p => item.prodotti.includes(p))) return false;
+      }
+
+      return true;
+    });
+  }, [currentData, filters, searchModes]);
+
+  // RICERCA INTER-BATCH DINAMICA
+  useEffect(() => {
+    const searchTimer = setTimeout(async () => {
+      const searchTerm = filters.ragione_sociale.trim();
+      if (!searchTerm || searchTerm.length < 3) return;
+
+      // Se abbiamo già dei risultati nel batch corrente, non facciamo nulla
+      if (filteredData.length > 0) return;
+
+      setSearchLoading(true);
+      try {
+        // Cerchiamo globalmente su Firestore
+        // Poiché Firestore non supporta "contains" nativo per query cross-batch efficienti senza full-text,
+        // cerchiamo per prefisso (starts with) che è il caso d'uso principale per trovare una ragione sociale specifica.
+        const q = query(
+          collection(db, "companies"), 
+          where("ragione_sociale", ">=", searchTerm),
+          where("ragione_sociale", "<=", searchTerm + "\uf8ff"),
+          limit(1)
+        );
+        
+        const snapshot = await getDocs(q);
+        if (!snapshot.empty) {
+          const company = snapshot.docs[0].data() as Company & { batch: number };
+          if (company.batch && company.batch !== currentBatch) {
+            console.log(`Trovato match inter-batch: ${company.ragione_sociale} nel Batch ${company.batch}`);
+            setCurrentBatch(company.batch);
+          }
+        }
+      } catch (e) {
+        console.error("Errore ricerca inter-batch:", e);
+      }
+      setSearchLoading(false);
+    }, 800);
+
+    return () => clearTimeout(searchTimer);
+  }, [filters.ragione_sociale, filteredData.length, currentBatch]);
+
   const groupedData = useMemo(() => {
     return {
-      "Grande >50M€": currentData.filter(d => d.fascia === "Grande >50M€"),
-      "Media 10-50M€": currentData.filter(d => d.fascia === "Media 10-50M€"),
-      "Piccola <10M€": currentData.filter(d => d.fascia === "Piccola <10M€"),
+      "Grande >50M€": filteredData.filter(d => d.fascia === "Grande >50M€"),
+      "Media 10-50M€": filteredData.filter(d => d.fascia === "Media 10-50M€"),
+      "Piccola <10M€": filteredData.filter(d => d.fascia === "Piccola <10M€"),
     };
-  }, [currentData]);
+  }, [filteredData]);
 
-  const totalAziende = currentData.length;
-  const countAlta = currentData.filter(d => d.priorita === "ALTA").length;
-  const countMedia = currentData.filter(d => d.priorita === "MEDIA").length;
-  const countBassa = currentData.filter(d => d.priorita === "BASSA").length;
+  const uniqueValues = useMemo(() => {
+    const getUnique = (key: keyof Company, baseData = currentData) => {
+      const vals = baseData.map(d => d[key] as string).filter(Boolean);
+      return Array.from(new Set(vals)).sort();
+    };
+
+    const filteredForProvinces = filters.regione 
+      ? currentData.filter(d => d.regione === filters.regione)
+      : currentData;
+
+    const filteredForComuni = filters.provincia
+      ? filteredForProvinces.filter(d => d.provincia === filters.provincia)
+      : filteredForProvinces;
+
+    return {
+      settore: getUnique('settore'),
+      sotto_settore: getUnique('sotto_settore'),
+      fascia: getUnique('fascia'),
+      comune: getUnique('comune', filteredForComuni),
+      provincia: getUnique('provincia', filteredForProvinces),
+      regione: getUnique('regione'),
+      ruolo: getUnique('ruolo'),
+      applicazione: getUnique('applicazione'),
+      prodotti: Array.from(new Set(currentData.flatMap(d => d.prodotti))).sort()
+    };
+  }, [currentData, filters.regione, filters.provincia]);
+
+  const totalAziende = filteredData.length;
+  const countAlta = filteredData.filter(d => d.priorita === "ALTA").length;
+  const countMedia = filteredData.filter(d => d.priorita === "MEDIA").length;
+  const countBassa = filteredData.filter(d => d.priorita === "BASSA").length;
   
   const activeBatchInfo = BATCHES.find(b => b.id === currentBatch) || BATCHES[0];
+
+  const toggleGroup = (fascia: string) => {
+    setCollapsedGroups(prev => ({
+      ...prev,
+      [fascia]: !prev[fascia]
+    }));
+  };
+
+  const toggleFilter = (key: keyof typeof filters, value: string) => {
+    setFilters(prev => {
+      const current = prev[key] as string[];
+      const updated = current.includes(value)
+        ? current.filter(v => v !== value)
+        : [...current, value];
+      return { ...prev, [key]: updated };
+    });
+  };
+
+  const resetFilters = () => {
+    setFilters({
+      priorita: [],
+      settore: "",
+      sotto_settore: "",
+      fascia: "",
+      ragione_sociale: "",
+      comune: "",
+      provincia: "",
+      regione: "",
+      ruolo: "",
+      prodotti: [],
+      applicazione: "",
+      note: ""
+    });
+  };
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F4F6F9] text-[#333] font-sans text-[11px] overflow-hidden">
       {/* HEADER FISSO */}
-      <header className="bg-white border-b-2 border-[#1A3A5C] px-4 md:px-6 py-4 flex flex-col md:flex-row md:justify-between items-start md:items-center shrink-0 gap-4 md:gap-0">
+      <header className="bg-white border-b-2 border-[#1A3A5C] px-4 md:px-6 py-1.5 md:py-3 flex flex-col md:flex-row md:justify-between items-start md:items-center shrink-0 gap-3 md:gap-0">
         <div>
-          <h1 className="text-[#1A3A5C] text-xl md:text-2xl font-bold leading-none">SPEA SISTEMI S.r.l.</h1>
-          <p className="text-gray-600 font-semibold mt-1 text-xs md:text-[11px]">Mappatura Prospect Commerciale — <span className="text-[#1A3A5C] uppercase">{activeBatchInfo.title}</span></p>
+          <h1 className="text-[#1A3A5C] text-lg md:text-2xl font-bold leading-none">SPEA SISTEMI S.r.l.</h1>
+          <p className="text-gray-600 font-semibold mt-0.5 text-[10px] md:text-[11px]">Mappatura Prospect Commerciale — <span className="text-[#1A3A5C] uppercase">{activeBatchInfo.title}</span></p>
         </div>
         <div className="flex flex-wrap gap-2 md:gap-4 items-center text-left md:text-right w-full md:w-auto">
+          <button 
+            onClick={() => setIsFilterVisible(!isFilterVisible)}
+            className={`flex items-center gap-2 text-xs md:text-sm font-medium px-3 py-1.5 md:py-1 rounded transition-colors ${isFilterVisible ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+          >
+            <Filter size={16} />
+            {isFilterVisible ? 'Chiudi Filtri' : 'Filtri Avanzati'}
+          </button>
+          
           <button 
             onClick={() => window.print()}
             className="no-print flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:py-1 rounded transition-colors"
@@ -144,6 +309,7 @@ export default function App() {
                     onClick={() => {
                       setCurrentBatch(batch.id);
                       setIsBatchMenuOpen(false);
+                      resetFilters();
                     }}
                     className={`w-full text-left px-4 py-3 text-xs hover:bg-gray-100 transition-colors border-b border-gray-100 last:border-0 ${currentBatch === batch.id ? 'bg-[#F0F5FA] font-bold text-[#1A3A5C]' : 'text-gray-700'}`}
                   >
@@ -162,6 +328,147 @@ export default function App() {
         </div>
       </header>
 
+      {/* FILTRI AVANZATI */}
+      {isFilterVisible && (
+        <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-3 shrink-0 shadow-inner overflow-y-auto max-h-[40vh] no-print">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-[#1A3A5C] font-bold flex items-center gap-2">
+              <Filter size={14} /> FILTRI ATTIVI
+            </h3>
+            <button onClick={resetFilters} className="text-red-600 hover:underline text-[10px] font-bold">RESET TUTTI I FILTRI</button>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6 gap-3">
+            {/* PRIORITA */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-500 uppercase">Priorità</label>
+              <div className="flex flex-wrap gap-1">
+                {["ALTA", "MEDIA", "BASSA"].map(p => (
+                  <button
+                    key={p}
+                    onClick={() => toggleFilter('priorita', p)}
+                    className={`px-2 py-1 rounded text-[9px] font-bold transition-all ${filters.priorita.includes(p) ? 'bg-[#1A3A5C] text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* RAGIONE SOCIALE */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-end">
+                <label className="text-[10px] font-bold text-gray-500 uppercase">Ragione Sociale</label>
+                <select 
+                  className="text-[9px] border-none bg-transparent font-bold text-blue-600 cursor-pointer"
+                  value={searchModes.ragione_sociale}
+                  onChange={(e) => setSearchModes(prev => ({...prev, ragione_sociale: e.target.value as any}))}
+                >
+                  <option value="contains">Contiene</option>
+                  <option value="starts">Inizia con</option>
+                </select>
+              </div>
+              <div className="relative">
+                {searchLoading ? (
+                  <div className="absolute left-2 top-1/2 -translate-y-1/2 animate-spin h-3 w-3 border-2 border-[#1A3A5C] border-t-transparent rounded-full" />
+                ) : (
+                  <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+                )}
+                <input 
+                  type="text" 
+                  value={filters.ragione_sociale}
+                  onChange={(e) => setFilters(prev => ({...prev, ragione_sociale: e.target.value}))}
+                  className="w-full pl-7 pr-2 py-1 border border-gray-200 rounded text-[10px] focus:border-blue-500 outline-none"
+                  placeholder="Cerca..."
+                />
+              </div>
+            </div>
+
+            {/* SETTORE */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-500 uppercase">Settore</label>
+              <select 
+                value={filters.settore}
+                onChange={(e) => setFilters(prev => ({...prev, settore: e.target.value}))}
+                className="w-full px-2 py-1 border border-gray-200 rounded text-[10px] focus:border-blue-500 outline-none"
+              >
+                <option value="">Tutti</option>
+                {uniqueValues.settore.map(v => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </div>
+
+            {/* PRODOTTI SPEA (MULTI) */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-bold text-gray-500 uppercase">Prodotti Spea</label>
+              <div className="flex flex-wrap gap-1 max-h-16 overflow-y-auto p-1 border border-gray-100 rounded">
+                {uniqueValues.prodotti.map(p => (
+                  <button
+                    key={p}
+                    onClick={() => toggleFilter('prodotti', p)}
+                    className={`px-1.5 py-0.5 rounded-[3px] text-[8px] font-bold transition-all ${filters.prodotti.includes(p) ? badgeColors[p] + ' text-white' : 'bg-gray-100 text-gray-500'}`}
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* AREA (REG/PROV/COMUNE) */}
+            <div className="space-y-1 sm:col-span-2 lg:col-span-1">
+              <label className="text-[10px] font-bold text-gray-500 uppercase">Localizzazione (Reg/Prov/Com)</label>
+              <div className="grid grid-cols-3 gap-1">
+                <select 
+                  value={filters.regione}
+                  onChange={(e) => setFilters(prev => ({...prev, regione: e.target.value, provincia: "", comune: ""}))}
+                  className="px-1 py-1 border border-gray-200 rounded text-[10px] outline-none"
+                >
+                  <option value="">Reg.</option>
+                  {uniqueValues.regione.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <select 
+                  value={filters.provincia}
+                  onChange={(e) => setFilters(prev => ({...prev, provincia: e.target.value, comune: ""}))}
+                  className="px-1 py-1 border border-gray-200 rounded text-[10px] outline-none"
+                >
+                  <option value="">Prov.</option>
+                  {uniqueValues.provincia.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+                <select 
+                  value={filters.comune}
+                  onChange={(e) => setFilters(prev => ({...prev, comune: e.target.value}))}
+                  className="px-1 py-1 border border-gray-200 rounded text-[10px] outline-none"
+                >
+                  <option value="">Com.</option>
+                  {uniqueValues.comune.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+            </div>
+
+             {/* NOTE SEARCH */}
+             <div className="space-y-1">
+              <div className="flex justify-between items-end">
+                <label className="text-[10px] font-bold text-gray-500 uppercase">Note Commerciali</label>
+                <select 
+                  className="text-[9px] border-none bg-transparent font-bold text-blue-600 cursor-pointer"
+                  value={searchModes.note}
+                  onChange={(e) => setSearchModes(prev => ({...prev, note: e.target.value as any}))}
+                >
+                  <option value="contains">Contiene</option>
+                  <option value="starts">Inizia con</option>
+                </select>
+              </div>
+              <input 
+                type="text" 
+                value={filters.note}
+                onChange={(e) => setFilters(prev => ({...prev, note: e.target.value}))}
+                className="w-full px-2 py-1 border border-gray-200 rounded text-[10px] focus:border-blue-500 outline-none"
+                placeholder="Cerca nelle note..."
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CARDS RIEPILOGATIVE */}
       <div className="px-4 md:px-6 pt-4 shrink-0 flex items-center justify-between">
         <div className="text-sm md:text-base font-semibold text-[#1A3A5C] flex items-center gap-2">
@@ -171,34 +478,34 @@ export default function App() {
           Totale Censite: {totalAllAziende}
         </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 px-4 md:px-6 py-3 shrink-0">
-        <div className="bg-white p-3 rounded shadow-sm border-l-4 border-gray-400 flex flex-col justify-between">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 px-4 md:px-6 py-2 md:py-3 shrink-0">
+        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-gray-400 flex flex-col justify-between">
           <div>
-            <div className="text-[10px] md:text-xs text-gray-500 uppercase">Totale Aziende</div>
-            <div className="text-lg md:text-xl font-bold">{totalAziende}</div>
+            <div className="text-[9px] md:text-xs text-gray-500 uppercase">Totale Aziende</div>
+            <div className="text-base md:text-xl font-bold">{totalAziende}</div>
           </div>
-          <div className="text-[9px] md:text-[10px] text-gray-400 mt-1 leading-tight">Aziende trovate in questo gruppo.</div>
+          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Aziende trovate in questo gruppo.</div>
         </div>
-        <div className="bg-white p-3 rounded shadow-sm border-l-4 border-[#C0392B] flex flex-col justify-between">
+        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#C0392B] flex flex-col justify-between">
           <div>
-            <div className="text-[10px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Alta</span> <span className="hidden sm:inline">🔴</span></div>
-            <div className="text-lg md:text-xl font-bold">{countAlta}</div>
+            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Alta</span> <span className="hidden sm:inline">🔴</span></div>
+            <div className="text-base md:text-xl font-bold">{countAlta}</div>
           </div>
-          <div className="text-[9px] md:text-[10px] text-gray-400 mt-1 leading-tight">I clienti più importanti, da chiamare per primi!</div>
+          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">I clienti più importanti, da chiamare per primi!</div>
         </div>
-        <div className="bg-white p-3 rounded shadow-sm border-l-4 border-[#E67E22] flex flex-col justify-between">
+        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#E67E22] flex flex-col justify-between">
           <div>
-            <div className="text-[10px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Media</span> <span className="hidden sm:inline">🟡</span></div>
-            <div className="text-lg md:text-xl font-bold">{countMedia}</div>
+            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Media</span> <span className="hidden sm:inline">🟡</span></div>
+            <div className="text-base md:text-xl font-bold">{countMedia}</div>
           </div>
-          <div className="text-[9px] md:text-[10px] text-gray-400 mt-1 leading-tight">Clienti buoni, da contattare subito dopo.</div>
+          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Clienti buoni, da contattare subito dopo.</div>
         </div>
-        <div className="bg-white p-3 rounded shadow-sm border-l-4 border-[#27AE60] flex flex-col justify-between">
+        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#27AE60] flex flex-col justify-between">
           <div>
-            <div className="text-[10px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Bassa</span> <span className="hidden sm:inline">🟢</span></div>
-            <div className="text-lg md:text-xl font-bold">{countBassa}</div>
+            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Bassa</span> <span className="hidden sm:inline">🟢</span></div>
+            <div className="text-base md:text-xl font-bold">{countBassa}</div>
           </div>
-          <div className="text-[9px] md:text-[10px] text-gray-400 mt-1 leading-tight">Piccole occasioni da valutare con calma.</div>
+          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Piccole occasioni da valutare con calma.</div>
         </div>
       </div>
 
@@ -263,22 +570,32 @@ export default function App() {
                       </button>
                     </td>
                   </tr>
-                ) : (Object.entries(groupedData) as [Fascia, Company[]][]).map(([fascia, companies]) => {
+                 ) : (Object.entries(groupedData) as [Fascia, Company[]][]).map(([fascia, companies]) => {
                   if (companies.length === 0) return null;
+                  const isCollapsed = !!collapsedGroups[fascia];
                   
                   let fasciaLabel = "";
-                  if (fascia === "Grande >50M€") fasciaLabel = "▶ GRANDI INDUSTRIE (fatturato > 50M€)";
-                  if (fascia === "Media 10-50M€") fasciaLabel = "▶ MEDIE INDUSTRIE (10M€ – 50M€)";
-                  if (fascia === "Piccola <10M€") fasciaLabel = "▶ PICCOLE INDUSTRIE E ARTIGIANATO (< 10M€)";
+                  if (fascia === "Grande >50M€") fasciaLabel = "GRANDI INDUSTRIE (fatturato > 50M€)";
+                  if (fascia === "Media 10-50M€") fasciaLabel = "MEDIE INDUSTRIE (10M€ – 50M€)";
+                  if (fascia === "Piccola <10M€") fasciaLabel = "PICCOLE INDUSTRIE E ARTIGIANATO (< 10M€)";
 
                   return (
                     <React.Fragment key={fascia}>
-                      <tr className="bg-[#1A3A5C] text-white font-bold text-left text-xs">
+                      <tr 
+                        className="bg-[#1A3A5C] text-white font-bold text-left text-xs cursor-pointer hover:bg-[#2c4e72] transition-colors"
+                        onClick={() => toggleGroup(fascia)}
+                      >
                         <td colSpan={14} className="px-3 py-1.5 border border-[#1A3A5C]">
-                          {fasciaLabel}
+                          <div className="flex items-center gap-2">
+                            <ChevronDown 
+                              size={14} 
+                              className={`transition-transform duration-200 ${isCollapsed ? '-rotate-90' : 'rotate-0'}`} 
+                            />
+                            {fasciaLabel}
+                          </div>
                         </td>
                       </tr>
-                      {companies.map((company) => {
+                      {!isCollapsed && companies.map((company) => {
                         const style = prioritaStyles[company.priorita];
                         const rowClass = `${style.bg} border-l-4 ${fasciaBorders[company.fascia]}`;
 
@@ -319,7 +636,7 @@ export default function App() {
               </tbody>
             </table>
           </div>
-          <footer className="bg-gray-100 p-3 border-t border-gray-300 flex flex-col md:flex-row justify-between items-center md:items-center text-[10px] text-gray-500 shrink-0 gap-2 md:gap-0 text-center md:text-left">
+          <footer className="bg-gray-100 py-1 px-3 border-t border-gray-300 flex flex-col md:flex-row justify-between items-center md:items-center text-[9px] text-gray-500 shrink-0 gap-1 md:gap-0 text-center md:text-left">
             <div>Documento riservato — uso interno Spea Sistemi S.r.l.</div>
             <div className="font-bold italic">Generato con supporto AI — da verificare</div>
             <div>Batch {currentBatch} / {BATCHES.length} | Settore: {activeBatchInfo.title}</div>

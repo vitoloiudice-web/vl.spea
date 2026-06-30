@@ -29,7 +29,6 @@ const regioniData = {
 
 const ruoliList = ["Capofila", "Terzista", "Costruttore Macchine", "Indotto", "System Integrator", "OEM"];
 const prodottiList = ["Festo", "Schunk", "Leuze", "Hiwin", "Trafag", "Nastri", "Alluminio", "Inox 316"];
-const prioritaList: Priorita[] = ["ALTA", "MEDIA", "BASSA"];
 
 const batchConfigs = [
   {
@@ -121,7 +120,6 @@ function generateName(settore: string, fascia: string): string {
 }
 
 function generateLocation(): { regione: Regione, provincia: string, comune: string } {
-  const regioniNames = Object.keys(regioniData) as Regione[];
   // Bias towards Puglia
   const regPool = ["Puglia", "Puglia", "Puglia", "Puglia", "Puglia", "Basilicata", "Basilicata", "Molise", "Abruzzo", "Abruzzo"];
   const regione = randomItem(regPool) as Regione;
@@ -132,7 +130,7 @@ function generateLocation(): { regione: Regione, provincia: string, comune: stri
   return { regione, provincia, comune };
 }
 
-export async function generateAndSeedExtra3() {
+export async function generateAndSeedExtra4() {
   const companiesRef = collection(db, "companies");
   let total = 0;
   
@@ -146,20 +144,20 @@ export async function generateAndSeedExtra3() {
       { f: "Piccola <10M€" as Fascia, c: 50 }
     ];
     
-    let compId = 500; // Starting from 500 to avoid ID collisions
+    let compId = 1000; // Starting from 1000 to avoid ID collisions
     for (const dist of distributions) {
       for (let i = 0; i < dist.c; i++) {
         const { regione, provincia, comune } = generateLocation();
         
         let priorita: Priorita = "MEDIA";
-        if (dist.f === "Grande >50M€") priorita = randomItem(["ALTA", "ALTA", "MEDIA"]);
-        if (dist.f === "Media 10-50M€") priorita = randomItem(["ALTA", "MEDIA", "MEDIA", "BASSA"]);
-        if (dist.f === "Piccola <10M€") priorita = randomItem(["MEDIA", "BASSA", "BASSA"]);
+        if (dist.f === "Grande >50M€") priorita = randomItem(["ALTA", "ALTA", "MEDIA"] as Priorita[]);
+        if (dist.f === "Media 10-50M€") priorita = randomItem(["ALTA", "MEDIA", "MEDIA", "BASSA"] as Priorita[]);
+        if (dist.f === "Piccola <10M€") priorita = randomItem(["MEDIA", "BASSA", "BASSA"] as Priorita[]);
         
         const settore = randomItem(bConf.sect);
         
         const c: Company = {
-          id: `b${bConf.id}-extra3-${dist.f.charAt(0).toLowerCase()}${compId++}`,
+          id: `b${bConf.id}-extra4-${dist.f.charAt(0).toLowerCase()}${compId++}`,
           settore,
           sotto_settore: randomItem(bConf.subSect),
           fascia: dist.f,
@@ -187,11 +185,11 @@ export async function generateAndSeedExtra3() {
     });
     
     await batch.commit();
-    console.log(`Batch ${bConf.id} seeded with ${companies.length} extra3 companies.`);
+    console.log(`Batch ${bConf.id} seeded with ${companies.length} extra4 companies.`);
     total += companies.length;
   }
   
-  console.log(`Successfully generated and seeded ${total} extra3 companies across 10 batches.`);
+  console.log(`Successfully generated and seeded ${total} extra4 companies across 10 batches.`);
 }
 
-generateAndSeedExtra3().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+generateAndSeedExtra4().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
