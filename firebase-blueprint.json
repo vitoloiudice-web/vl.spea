@@ -1,0 +1,33 @@
+{
+  "entities": {
+    "Company": {
+      "title": "Company",
+      "description": "Company data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "settore": { "type": "string" },
+        "sotto_settore": { "type": "string" },
+        "fascia": { "type": "string" },
+        "ragione_sociale": { "type": "string" },
+        "comune": { "type": "string" },
+        "provincia": { "type": "string" },
+        "regione": { "type": "string" },
+        "ruolo": { "type": "string" },
+        "prodotti": { "type": "array" },
+        "applicazione": { "type": "string" },
+        "priorita": { "type": "string" },
+        "contatto": { "type": "string" },
+        "distretto": { "type": "string" },
+        "note": { "type": "string" },
+        "batch": { "type": "number" }
+      }
+    }
+  },
+  "firestore": {
+    "/companies/{companyId}": {
+      "schema": "#/entities/Company",
+      "description": "Companies mapped by prospect"
+    }
+  }
+}
