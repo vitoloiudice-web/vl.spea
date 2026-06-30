@@ -14,14 +14,14 @@ export default defineConfig(() => {
         includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
         manifest: {
           name: 'Spea Prospect Manager',
-          short_name: 'SpeaProspect',
+          short_name: 'VL.Spea',
           description: 'Gestione Prospect Industriali Spea Sistemi',
           theme_color: '#1A3A5C',
           icons: [
             {
-              src: '/src/assets/images/pwa_icon_512_1782826335180.jpg',
+              src: '/src/assets/images/appspea.png',
               sizes: '512x512',
-              type: 'image/jpeg',
+              type: 'image/png',
               purpose: 'any maskable'
             }
           ]
