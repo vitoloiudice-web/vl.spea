@@ -19,4 +19,6 @@ export interface Company {
   contatto: string;
   distretto: string;
   note: string;
+  note_commerciali: string;
+  batch: number;
 }

@@ -1,25 +1,27 @@
 import React, { useMemo, useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Fascia, Company } from './types';
 import { Download, ChevronDown, Loader2, Search, Filter, X } from 'lucide-react';
-import { collection, getDocs, query, where, getCountFromServer } from 'firebase/firestore';
+import { collection, getDocs, query, where, getCountFromServer, limit } from 'firebase/firestore';
 import { db } from './lib/firebase';
-import { seedBatch } from './lib/seed';
+import { seedBatch, seedAll, clearAll } from './lib/seed';
+import { EnricherPanel } from './components/EnricherPanel';
 
 const badgeColors: Record<string, string> = {
-  "Schunk": "bg-[#003974]",
-  "Hiwin": "bg-[#8DBE1D]",
-  "Leuze": "bg-[#660099]",
-  "Festo": "bg-[#0063AD]",
-  "Trafag": "bg-[#FF5100]",
-  "Alluminio": "bg-[#7F8C8D]",
-  "Inox 316": "bg-[#2C3E50]",
-  "Nastri": "bg-[#16A085]",
+  "Schunk": "bg-[#2c3e50]",
+  "Hiwin": "bg-[#27ae60]",
+  "Leuze": "bg-[#8e44ad]",
+  "Festo": "bg-[#2980b9]",
+  "Trafag": "bg-[#d35400]",
+  "Alluminio": "bg-[#7f8c8d]",
+  "Inox 316": "bg-[#34495e]",
+  "Nastri": "bg-[#16a085]",
 };
 
-const prioritaStyles: Record<string, { bg: string, badgeBg: string }> = {
-  "ALTA": { bg: "bg-[#FFF0F0]", badgeBg: "bg-[#C0392B]" },
-  "MEDIA": { bg: "bg-[#FFFBF0]", badgeBg: "bg-[#E67E22]" },
-  "BASSA": { bg: "bg-[#F0FFF4]", badgeBg: "bg-[#27AE60]" }
+const prioritaStyles: Record<string, { bg: string, text: string, border: string }> = {
+  "ALTA": { bg: "bg-red-50", text: "text-red-700", border: "border-red-100" },
+  "MEDIA": { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-100" },
+  "BASSA": { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-100" }
 };
 
 const fasciaBorders: Record<string, string> = {
@@ -93,9 +95,39 @@ export default function App() {
     }
     setLoading(false);
   };
+
+  const handleSeedAll = async () => {
+    setLoading(true);
+    try {
+      await seedAll();
+      const q = query(collection(db, "companies"), where("batch", "==", currentBatch));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => doc.data() as Company);
+      setCurrentData(data);
+      const snapshot = await getCountFromServer(collection(db, "companies"));
+      setTotalAllAziende(snapshot.data().count);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
+
+  const handleClear = async () => {
+    if (!confirm("Sei sicuro di voler svuotare l'intero database?")) return;
+    setLoading(true);
+    try {
+      await clearAll();
+      setCurrentData([]);
+      setTotalAllAziende(0);
+    } catch (e) {
+      console.error(e);
+    }
+    setLoading(false);
+  };
   
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
   const [isFilterVisible, setIsFilterVisible] = useState(false);
+  const [isEnricherOpen, setIsEnricherOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [filters, setFilters] = useState({
     priorita: [] as string[],
@@ -141,7 +173,9 @@ export default function App() {
       };
 
       if (!matchText(item.ragione_sociale, filters.ragione_sociale, searchModes.ragione_sociale)) return false;
-      if (!matchText(item.note || "", filters.note, searchModes.note)) return false;
+      
+      const combinedNotes = `${item.note || ""} ${item.note_commerciali || ""}`;
+      if (!matchText(combinedNotes, filters.note, searchModes.note)) return false;
 
       // Prodotti (Multi)
       if (filters.prodotti.length > 0) {
@@ -268,37 +302,67 @@ export default function App() {
 
   return (
     <div className="flex flex-col h-screen w-full bg-[#F4F6F9] text-[#333] font-sans text-[11px] overflow-hidden">
+      {/* MODALE ENRICHER */}
+      <AnimatePresence>
+        {isEnricherOpen && <EnricherPanel onClose={() => setIsEnricherOpen(false)} />}
+      </AnimatePresence>
+
       {/* HEADER FISSO */}
-      <header className="bg-white border-b-2 border-[#1A3A5C] px-4 md:px-6 py-1.5 md:py-3 flex flex-col md:flex-row md:justify-between items-start md:items-center shrink-0 gap-3 md:gap-0">
-        <div>
-          <h1 className="text-[#1A3A5C] text-lg md:text-2xl font-bold leading-none">SPEA SISTEMI S.r.l.</h1>
-          <p className="text-gray-600 font-semibold mt-0.5 text-[10px] md:text-[11px]">Mappatura Prospect Commerciale — <span className="text-[#1A3A5C] uppercase">{activeBatchInfo.title}</span></p>
+      <header className="bg-white border-b border-gray-200 px-4 md:px-8 py-2 md:py-4 flex flex-col md:flex-row md:justify-between items-start md:items-center shrink-0 gap-4 md:gap-0 shadow-sm z-50">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-[#1A3A5C] text-xl md:text-2xl font-black tracking-tighter flex items-center gap-2">
+            SPEA SISTEMI <span className="text-gray-300 font-light">|</span> <span className="text-blue-600 font-medium">CRM</span>
+          </h1>
+          <p className="text-gray-500 font-medium text-[9px] md:text-[10px] uppercase tracking-widest">
+            Mappatura Prospect Commerciale — <span className="text-[#1A3A5C] font-bold">{activeBatchInfo.title}</span>
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2 md:gap-4 items-center text-left md:text-right w-full md:w-auto">
+        <div className="flex flex-wrap gap-2 md:gap-3 items-center w-full md:w-auto">
           <button 
             onClick={() => setIsFilterVisible(!isFilterVisible)}
-            className={`flex items-center gap-2 text-xs md:text-sm font-medium px-3 py-1.5 md:py-1 rounded transition-colors ${isFilterVisible ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+            className={`flex items-center gap-2 text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-sm ${isFilterVisible ? 'bg-orange-500 text-white ring-2 ring-orange-200' : 'bg-gray-50 text-gray-700 hover:bg-gray-100 border border-gray-200'}`}
           >
-            <Filter size={16} />
-            {isFilterVisible ? 'Chiudi Filtri' : 'Filtri Avanzati'}
+            <Filter size={14} />
+            {isFilterVisible ? 'CHIUDI FILTRI' : 'FILTRI AVANZATI'}
           </button>
           
           <button 
             onClick={() => window.print()}
-            className="no-print flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:py-1 rounded transition-colors"
+            className="no-print flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-md active:scale-95"
           >
-            <Download size={16} />
-            <span className="hidden sm:inline">Esporta / Stampa PDF</span>
-            <span className="sm:hidden">PDF</span>
+            <Download size={14} />
+            ESPORTA PDF
           </button>
+
+          <div className="flex gap-1 no-print border-l border-gray-200 pl-3 ml-1">
+            <button 
+              onClick={() => setIsEnricherOpen(true)}
+              className="bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 px-3 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center gap-2"
+            >
+              <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></div>
+              ENRICHER
+            </button>
+            <button 
+              onClick={handleSeedAll}
+              className="bg-white border border-indigo-200 text-indigo-600 hover:bg-indigo-50 px-3 py-2 rounded-lg text-[10px] font-bold transition-all"
+            >
+              RIPRISTINA
+            </button>
+            <button 
+              onClick={handleClear}
+              className="bg-white border border-red-200 text-red-600 hover:bg-red-50 px-3 py-2 rounded-lg text-[10px] font-bold transition-all"
+            >
+              SVUOTA
+            </button>
+          </div>
           
-          <div className="relative">
+          <div className="relative ml-2">
             <button 
               onClick={() => setIsBatchMenuOpen(!isBatchMenuOpen)}
-              className="bg-[#1A3A5C] hover:bg-[#112740] transition-colors text-white px-3 py-1.5 rounded text-xs md:text-sm font-bold flex items-center gap-2 cursor-pointer shadow-sm"
+              className="bg-[#1A3A5C] hover:bg-[#0f243a] text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-3 transition-all shadow-lg active:scale-95"
             >
-              BATCH {currentBatch} / {BATCHES.length}
-              <ChevronDown size={14} className={`transition-transform ${isBatchMenuOpen ? 'rotate-180' : ''}`} />
+              BATCH {currentBatch}
+              <ChevronDown size={14} className={`transition-transform duration-300 ${isBatchMenuOpen ? 'rotate-180' : ''}`} />
             </button>
             
             {isBatchMenuOpen && (
@@ -470,42 +534,43 @@ export default function App() {
       )}
 
       {/* CARDS RIEPILOGATIVE */}
-      <div className="px-4 md:px-6 pt-4 shrink-0 flex items-center justify-between">
-        <div className="text-sm md:text-base font-semibold text-[#1A3A5C] flex items-center gap-2">
-          <span>📊</span> Database Generale Prospect
+      <div className="px-4 md:px-8 pt-6 shrink-0 flex items-center justify-between">
+        <div className="text-lg font-black text-[#1A3A5C] tracking-tight flex items-center gap-3">
+          <div className="w-1.5 h-6 bg-blue-600 rounded-full"></div>
+          DATABASE PROSPECT
         </div>
-        <div className="bg-[#1A3A5C] text-white px-3 py-1 rounded-full text-xs md:text-sm font-bold shadow-sm">
-          Totale Censite: {totalAllAziende}
+        <div className="bg-[#1A3A5C] text-white px-4 py-1.5 rounded-full text-[10px] font-bold tracking-widest shadow-lg border border-white/10">
+          TOTALE CENSIRE: {totalAllAziende}
         </div>
       </div>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4 px-4 md:px-6 py-2 md:py-3 shrink-0">
-        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-gray-400 flex flex-col justify-between">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-4 md:px-8 py-4 shrink-0">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-between transition-all hover:shadow-md">
           <div>
-            <div className="text-[9px] md:text-xs text-gray-500 uppercase">Totale Aziende</div>
-            <div className="text-base md:text-xl font-bold">{totalAziende}</div>
+            <div className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Totale Aziende</div>
+            <div className="text-2xl font-black text-[#1A3A5C] mt-1">{totalAziende}</div>
           </div>
-          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Aziende trovate in questo gruppo.</div>
+          <div className="text-[9px] text-gray-400 mt-2 font-medium">Segmento batch attivo</div>
         </div>
-        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#C0392B] flex flex-col justify-between">
+        <div className="bg-white p-4 rounded-xl shadow-sm border-b-2 border-red-500 flex flex-col justify-between transition-all hover:shadow-md">
           <div>
-            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Alta</span> <span className="hidden sm:inline">🔴</span></div>
-            <div className="text-base md:text-xl font-bold">{countAlta}</div>
+            <div className="text-[10px] font-black text-red-500 uppercase tracking-widest flex items-center gap-1.5">PRIORITÀ ALTA</div>
+            <div className="text-2xl font-black text-red-600 mt-1">{countAlta}</div>
           </div>
-          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">I clienti più importanti, da chiamare per primi!</div>
+          <div className="text-[9px] text-gray-400 mt-2 font-medium underline underline-offset-2">Da contattare con urgenza</div>
         </div>
-        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#E67E22] flex flex-col justify-between">
+        <div className="bg-white p-4 rounded-xl shadow-sm border-b-2 border-amber-500 flex flex-col justify-between transition-all hover:shadow-md">
           <div>
-            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Media</span> <span className="hidden sm:inline">🟡</span></div>
-            <div className="text-base md:text-xl font-bold">{countMedia}</div>
+            <div className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1.5">PRIORITÀ MEDIA</div>
+            <div className="text-2xl font-black text-amber-600 mt-1">{countMedia}</div>
           </div>
-          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Clienti buoni, da contattare subito dopo.</div>
+          <div className="text-[9px] text-gray-400 mt-2 font-medium underline underline-offset-2">Potenziale da sviluppare</div>
         </div>
-        <div className="bg-white p-2 md:p-3 rounded shadow-sm border-l-4 border-[#27AE60] flex flex-col justify-between">
+        <div className="bg-white p-4 rounded-xl shadow-sm border-b-2 border-emerald-500 flex flex-col justify-between transition-all hover:shadow-md">
           <div>
-            <div className="text-[9px] md:text-xs text-gray-500 uppercase flex items-center gap-1"><span>Priorità Bassa</span> <span className="hidden sm:inline">🟢</span></div>
-            <div className="text-base md:text-xl font-bold">{countBassa}</div>
+            <div className="text-[10px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1.5">PRIORITÀ BASSA</div>
+            <div className="text-2xl font-black text-emerald-600 mt-1">{countBassa}</div>
           </div>
-          <div className="text-[8px] md:text-[10px] text-gray-400 mt-0.5 leading-tight">Piccole occasioni da valutare con calma.</div>
+          <div className="text-[9px] text-gray-400 mt-2 font-medium underline underline-offset-2">Monitoraggio periodico</div>
         </div>
       </div>
 
@@ -536,6 +601,7 @@ export default function App() {
                   <th className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-center w-[60px]">Priorità</th>
                   <th className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-left w-[90px]">Contatto Target</th>
                   <th className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-left w-[110px]">Distretto / Polo</th>
+                  <th className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-left w-[120px]">Note Tecniche</th>
                   <th className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-left w-[160px]">Note Commerciali</th>
                 </tr>
               </thead>
@@ -543,7 +609,7 @@ export default function App() {
                 {/* RENDERING GRUPPI FASCIA */}
                 {loading ? (
                   <tr>
-                    <td colSpan={14} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={15} className="px-6 py-12 text-center text-gray-500">
                       <div className="flex flex-col items-center justify-center">
                         <Loader2 className="animate-spin mb-4" size={32} />
                         <div className="text-lg font-bold mb-2">Caricamento dati in corso...</div>
@@ -553,14 +619,26 @@ export default function App() {
                   </tr>
                 ) : currentData.length === 0 ? (
                   <tr>
-                    <td colSpan={14} className="px-6 py-12 text-center text-gray-500">
+                    <td colSpan={15} className="px-6 py-12 text-center text-gray-500">
                       <div className="text-lg font-bold mb-2">Dati non disponibili</div>
                       <p>I dati per il Batch {currentBatch} non sono presenti nel database Firestore.</p>
                       <button 
                         onClick={handleSeed}
                         className="mt-4 bg-green-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-green-700 mr-2"
                       >
-                        Inizializza Database (Seed Batch {currentBatch})
+                        Inizializza Batch {currentBatch}
+                      </button>
+                      <button 
+                        onClick={handleSeedAll}
+                        className="mt-4 bg-indigo-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-indigo-700 mr-2"
+                      >
+                        Popola Database Completo (Aziende Reali)
+                      </button>
+                      <button 
+                        onClick={handleClear}
+                        className="mt-4 bg-red-600 text-white px-4 py-2 rounded text-xs font-bold hover:bg-red-700 mr-2"
+                      >
+                        Svuota Database
                       </button>
                       <button 
                         onClick={() => setCurrentBatch(1)}
@@ -585,7 +663,7 @@ export default function App() {
                         className="bg-[#1A3A5C] text-white font-bold text-left text-xs cursor-pointer hover:bg-[#2c4e72] transition-colors"
                         onClick={() => toggleGroup(fascia)}
                       >
-                        <td colSpan={14} className="px-3 py-1.5 border border-[#1A3A5C]">
+                        <td colSpan={15} className="px-3 py-1.5 border border-[#1A3A5C]">
                           <div className="flex items-center gap-2">
                             <ChevronDown 
                               size={14} 
@@ -596,37 +674,38 @@ export default function App() {
                         </td>
                       </tr>
                       {!isCollapsed && companies.map((company) => {
-                        const style = prioritaStyles[company.priorita];
-                        const rowClass = `${style.bg} border-l-4 ${fasciaBorders[company.fascia]}`;
+                        const pStyle = prioritaStyles[company.priorita];
+                        const rowClass = `hover:bg-gray-50/50 transition-colors border-l-4 ${fasciaBorders[company.fascia]}`;
 
                         return (
                           <tr key={company.id} className={rowClass}>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.settore}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.sotto_settore}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.fascia}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words font-bold uppercase">{company.ragione_sociale}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.comune}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-center font-medium text-[#333]">{company.provincia}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.regione}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.ruolo}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words">
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-gray-400 text-[9px]">{company.settore}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-gray-400 text-[9px]">{company.sotto_settore}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-gray-500 font-medium">{company.fascia}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words font-bold text-[#1A3A5C] uppercase tracking-tight">{company.ragione_sociale}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-[#333]">{company.comune}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-center font-mono text-gray-500">{company.provincia}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-[#333]">{company.regione}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-[#333]">{company.ruolo}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words">
                               <div className="flex flex-wrap gap-1">
                                 {company.prodotti.map(prod => (
-                                  <span key={prod} className={`px-[6px] py-[2px] rounded text-white text-[9px] font-bold whitespace-nowrap inline-block ${badgeColors[prod] || 'bg-gray-600'}`}>
+                                  <span key={prod} className={`px-[5px] py-[1px] rounded-[2px] text-white text-[8px] font-bold uppercase tracking-wider ${badgeColors[prod] || 'bg-gray-400'}`}>
                                     {prod}
                                   </span>
                                 ))}
                               </div>
                             </td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.applicazione}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-center">
-                              <span className={`inline-block px-[6px] py-[2px] rounded text-white font-bold text-[9px] whitespace-nowrap ${style.badgeBg}`}>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-[#333]">{company.applicazione}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-center">
+                              <span className={`inline-block px-2 py-0.5 rounded-full border text-[8px] font-bold uppercase tracking-tighter ${pStyle.bg} ${pStyle.text} ${pStyle.border}`}>
                                 {company.priorita}
                               </span>
                             </td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.contatto}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words text-[#333]">{company.distretto}</td>
-                            <td className="px-[6px] py-[4px] border border-[#DDE3EA] break-words italic">{company.note}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-[#333] font-medium">{company.contatto}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words text-gray-500">{company.distretto}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words italic text-[9px] text-gray-400 leading-snug">{company.note}</td>
+                            <td className="px-[6px] py-[5px] border border-[#DDE3EA] break-words font-medium text-[9px] text-[#1A3A5C] leading-snug">{company.note_commerciali}</td>
                           </tr>
                         );
                       })}
